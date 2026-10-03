@@ -47,7 +47,123 @@
     };
     cleanup();
     if (r.w < 10 || r.h < 10) return;
-    // 실시간 확대창은 별도 창에서 탭 화면 스트림을 받아 보여준다 (페이지는 건드리지 않음).
-    chrome.runtime.sendMessage({ lens: { ...r, vw: innerWidth, vh: innerHeight } });
+    const id = await chrome.runtime.sendMessage({ lensStream: true });
+    if (id) openLens(r, id);
   });
+
+  // 탭 화면을 실시간 영상으로 받아 선택 영역만 확대해 그리는 패널 (탭 안에 뜸).
+  // 패널이 원본 영역을 가리면 자기 자신이 찍히므로, 영역 옆 빈 곳에 띄운다.
+  async function openLens(r, streamId) {
+    const vw = innerWidth, vh = innerHeight;
+    let cx = r.x + r.w / 2, cy = r.y + r.h / 2, mag = 200, step = 10;
+    chrome.storage.local.get("wheelStep").then(({ wheelStep = 1 }) => (step = Math.max(1, wheelStep)));
+
+    // 패널 크기: 영역의 2배, 화면 절반 이내
+    const k = Math.min(2, (vw * 0.5) / r.w, (vh * 0.6) / r.h);
+    const pw = Math.max(200, Math.round(r.w * k)), ph = Math.max(140, Math.round(r.h * k));
+    const spots = [
+      [r.x + r.w + 12, r.y], [r.x - pw - 12, r.y],
+      [r.x, r.y + r.h + 12], [r.x, r.y - ph - 40],
+    ];
+    let [px, py] = spots.find(([x, y]) => x >= 0 && y >= 0 && x + pw <= vw && y + ph + 28 <= vh) || [vw - pw - 12, 12];
+
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      `all:initial;position:fixed;left:${px}px;top:${py}px;z-index:${Z};display:flex;flex-direction:column;` +
+      "background:#111;border:2px solid #8b5cf6;border-radius:8px;overflow:hidden;resize:both;" +
+      `width:${pw}px;height:${ph + 28}px;min-width:140px;min-height:100px;box-shadow:0 10px 30px rgba(0,0,0,.4);`;
+    const bar = document.createElement("div");
+    bar.style.cssText =
+      "all:initial;display:flex;align-items:center;gap:4px;height:28px;padding:0 6px;background:#1e1b4b;color:#fff;" +
+      "cursor:move;font:600 12px 'Segoe UI',system-ui,sans-serif;flex:none;user-select:none;";
+    const title = document.createElement("span");
+    title.style.cssText = "all:initial;flex:1;color:#fff;font:inherit;";
+    const btn = (t, fn) => {
+      const b = document.createElement("button");
+      b.textContent = t;
+      b.style.cssText = "all:initial;border-radius:5px;background:#ffffff22;color:#fff;font:inherit;padding:2px 8px;cursor:pointer;";
+      b.onmousedown = (e) => e.stopPropagation();
+      b.onclick = fn;
+      return b;
+    };
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "all:initial;display:block;flex:1;min-height:0;width:100%;cursor:grab;";
+    bar.append(title, btn("−", () => zoomBy(-step)), btn("+", () => zoomBy(step)), btn("✕", close));
+    panel.append(bar, canvas);
+    document.documentElement.appendChild(panel);
+    const ctx = canvas.getContext("2d");
+
+    let stream, video, raf;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId,
+                              maxWidth: 3840, maxHeight: 2160, maxFrameRate: 60 } },
+      });
+    } catch (e) {
+      title.textContent = "화면을 가져오지 못함: " + e.message;
+      return;
+    }
+    video = document.createElement("video");
+    video.muted = true;
+    video.srcObject = stream;
+    await video.play();
+
+    function draw() {
+      const dpr = devicePixelRatio;
+      const cw = canvas.clientWidth, ch = canvas.clientHeight;
+      const W = Math.round(cw * dpr), H = Math.round(ch * dpr);
+      if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+      if (video.videoWidth && W && H) {
+        const scale = Math.min(cw / r.w, ch / r.h) * mag / 200; // 200% = 처음 패널 크기에 꼭 맞음
+        const sw = cw / scale, sh = ch / scale;
+        const kx = video.videoWidth / vw, ky = video.videoHeight / vh;
+        ctx.imageSmoothingQuality = "high";
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, W, H);
+        ctx.drawImage(video, (cx - sw / 2) * kx, (cy - sh / 2) * ky, sw * kx, sh * ky, 0, 0, W, H);
+      }
+      title.textContent = mag + "%";
+      raf = requestAnimationFrame(draw);
+    }
+    draw();
+
+    function zoomBy(d) { mag = Math.min(2000, Math.max(25, mag + d)); }
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      zoomBy((e.deltaY < 0 ? 1 : -1) * step);
+    }, { passive: false, capture: true });
+
+    function dragWith(e, onMove) {
+      e.preventDefault();
+      let lx = e.clientX, ly = e.clientY;
+      const move = (ev) => { onMove(ev.clientX - lx, ev.clientY - ly); lx = ev.clientX; ly = ev.clientY; };
+      const up = () => {
+        removeEventListener("mousemove", move, true);
+        removeEventListener("mouseup", up, true);
+      };
+      addEventListener("mousemove", move, true);
+      addEventListener("mouseup", up, true);
+    }
+    // 내용 이동
+    canvas.addEventListener("mousedown", (e) => dragWith(e, (dx, dy) => {
+      const scale = Math.min(canvas.clientWidth / r.w, canvas.clientHeight / r.h) * mag / 200;
+      cx -= dx / scale; cy -= dy / scale;
+    }));
+    // 패널 이동
+    bar.addEventListener("mousedown", (e) => dragWith(e, (dx, dy) => {
+      px += dx; py += dy;
+      panel.style.left = px + "px"; panel.style.top = py + "px";
+    }));
+
+    function onEsc(e) { if (e.key === "Escape") close(); }
+    addEventListener("keydown", onEsc, true);
+    function close() {
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      panel.remove();
+      removeEventListener("keydown", onEsc, true);
+    }
+    stream.getVideoTracks()[0].onended = close;
+  }
 })();
