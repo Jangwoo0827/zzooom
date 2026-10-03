@@ -68,6 +68,8 @@
     let [px, py] = spots.find(([x, y]) => x >= 0 && y >= 0 && x + pw <= vw && y + ph + 28 <= vh) || [vw - pw - 12, 12];
 
     const panel = document.createElement("div");
+    panel.id = "__fzPanel";
+    chrome.runtime.sendMessage({ injectPip: true });
     panel.style.cssText =
       `all:initial;position:fixed;left:${px}px;top:${py}px;z-index:${Z};display:flex;flex-direction:column;` +
       "background:#111;border:2px solid #8b5cf6;border-radius:8px;overflow:hidden;resize:both;" +
@@ -90,6 +92,7 @@
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "all:initial;display:block;flex:1;min-height:0;width:100%;cursor:grab;";
     bar.append(title, btn("−", () => zoomBy(-step)), btn("+", () => zoomBy(step)), pinBtn = btn("📌", togglePin), btn("✕", close));
+    pinBtn.id = "__fzPin";
     pinBtn.title = "항상 위 (다른 탭·프로그램 위에 띄우기)";
     panel.append(bar, canvas);
     document.documentElement.appendChild(panel);
@@ -164,40 +167,37 @@
     addEventListener("keydown", onEsc, true);
     // 항상 위: Document Picture-in-Picture 창으로 패널을 옮긴다.
     // 별도 창이라 원본 영역 위에 겹쳐도 자기 자신이 찍히지 않는다.
-    async function togglePin() {
-      if (pip) { pip.close(); return; }
-      if (!window.documentPictureInPicture) { title.textContent = "이 브라우저는 항상 위를 지원하지 않음"; return; }
-      const w = panel.offsetWidth, h = panel.offsetHeight;
-      try {
-        pip = await documentPictureInPicture.requestWindow({ width: w, height: h });
-      } catch (e) {
-        title.textContent = "항상 위 실패: " + e.message;
-        return;
-      }
-      pip.document.body.style.cssText = "margin:0;height:100vh;display:flex;background:#111;overflow:hidden;";
+    // 📌 클릭 시 PiP 열기는 페이지 쪽 pip.js가 처리하고, 여기서는 열림/닫힘에 맞춰 상태만 바꾼다.
+    let size;
+    function togglePin() { if (pip) pip.close(); else size = [panel.offsetWidth, panel.offsetHeight]; }
+    panel.addEventListener("__fzPipError", (e) => (title.textContent = e.detail));
+    panel.addEventListener("__fzPipOpen", () => {
+      pip = panel.ownerDocument.defaultView;
       Object.assign(panel.style, { position: "static", width: "100%", height: "100%", border: "0", borderRadius: "0", resize: "none" });
       bar.style.cursor = "default";
       pinBtn.style.background = "#8b5cf6";
-      pip.document.body.appendChild(panel);
       pip.addEventListener("keydown", onEsc, true);
       rafWin.cancelAnimationFrame(raf); draw();
-      pip.addEventListener("pagehide", () => {
-        pip = null;
-        if (!stream?.active) return;
-        Object.assign(panel.style, { position: "fixed", left: px + "px", top: py + "px", width: w + "px", height: h + "px",
-                                     border: "2px solid #8b5cf6", borderRadius: "8px", resize: "both" });
-        bar.style.cursor = "move";
-        pinBtn.style.background = "#ffffff22";
-        document.documentElement.appendChild(panel);
-        draw();
-      });
+    });
+    function onPipClose() {
+      pip = null;
+      if (!stream?.active) return;
+      const [w, h] = size;
+      Object.assign(panel.style, { position: "fixed", left: px + "px", top: py + "px", width: w + "px", height: h + "px",
+                                   border: "2px solid #8b5cf6", borderRadius: "8px", resize: "both" });
+      bar.style.cursor = "move";
+      pinBtn.style.background = "#ffffff22";
+      document.documentElement.appendChild(panel);
+      draw();
     }
+    document.addEventListener("__fzPipClose", onPipClose);
 
     function close() {
       if (pip) { const p = pip; pip = null; p.close(); }
       rafWin.cancelAnimationFrame(raf);
       stream?.getTracks().forEach((t) => t.stop());
       panel.remove();
+      document.removeEventListener("__fzPipClose", onPipClose);
       removeEventListener("keydown", onEsc, true);
     }
     stream.getVideoTracks()[0].onended = close;

@@ -35,6 +35,9 @@ function startAreaSelect(tabId) {
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.wheel && sender.tab) step(sender.tab, nudge(msg.wheel));
   else if (msg.startArea) startAreaSelect(msg.startArea);
+  else if (msg.injectPip && sender.tab) {
+    chrome.scripting.executeScript({ target: { tabId: sender.tab.id }, world: "MAIN", files: ["pip.js"] }).catch(() => {});
+  }
   else if (msg.lensStream && sender.tab) {
     // 영역 확대 패널용: 이 탭의 content script가 받을 수 있는 화면 스트림 ID
     chrome.tabCapture.getMediaStreamId({ targetTabId: sender.tab.id, consumerTabId: sender.tab.id })
