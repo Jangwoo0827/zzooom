@@ -79,8 +79,8 @@
       "all:initial;display:flex;align-items:center;gap:4px;height:28px;padding:0 6px;background:#1e1b4b;color:#fff;" +
       "cursor:move;font:600 12px 'Segoe UI',system-ui,sans-serif;flex:none;user-select:none;";
     const title = document.createElement("span");
-    title.style.cssText = "all:initial;flex:1;color:#fff;font:inherit;";
-    let pinBtn, pip = null, rafWin = window;
+    title.style.cssText = "all:initial;flex:1;color:#fff;font:inherit;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;";
+    let status = "", pinBtn, pip = null, rafWin = window;
     const btn = (t, fn) => {
       const b = document.createElement("button");
       b.textContent = t;
@@ -128,7 +128,7 @@
         ctx.fillRect(0, 0, W, H);
         ctx.drawImage(video, (cx - sw / 2) * kx, (cy - sh / 2) * ky, sw * kx, sh * ky, 0, 0, W, H);
       }
-      title.textContent = mag + "%";
+      title.textContent = (status ? status + " · " : "") + mag + "%";
       rafWin = pip || window;
       raf = rafWin.requestAnimationFrame(draw); // PiP 창에선 그 창 기준으로 그림
     }
@@ -170,7 +170,7 @@
     // 📌 클릭 시 PiP 열기는 페이지 쪽 pip.js가 처리하고, 여기서는 열림/닫힘에 맞춰 상태만 바꾼다.
     let size;
     function togglePin() { if (pip) pip.close(); else size = [panel.offsetWidth, panel.offsetHeight]; }
-    panel.addEventListener("__fzPipError", (e) => (title.textContent = e.detail));
+    panel.addEventListener("__fzPipError", (e) => (status = e.detail));
     panel.addEventListener("__fzPipOpen", () => {
       pip = panel.ownerDocument.defaultView;
       Object.assign(panel.style, { position: "static", width: "100%", height: "100%", border: "0", borderRadius: "0", resize: "none" });
