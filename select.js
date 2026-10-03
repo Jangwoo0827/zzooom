@@ -78,6 +78,7 @@
       "cursor:move;font:600 12px 'Segoe UI',system-ui,sans-serif;flex:none;user-select:none;";
     const title = document.createElement("span");
     title.style.cssText = "all:initial;flex:1;color:#fff;font:inherit;";
+    let pinBtn, pip = null, rafWin = window;
     const btn = (t, fn) => {
       const b = document.createElement("button");
       b.textContent = t;
@@ -88,7 +89,8 @@
     };
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "all:initial;display:block;flex:1;min-height:0;width:100%;cursor:grab;";
-    bar.append(title, btn("−", () => zoomBy(-step)), btn("+", () => zoomBy(step)), btn("✕", close));
+    bar.append(title, btn("−", () => zoomBy(-step)), btn("+", () => zoomBy(step)), pinBtn = btn("📌", togglePin), btn("✕", close));
+    pinBtn.title = "항상 위 (다른 탭·프로그램 위에 띄우기)";
     panel.append(bar, canvas);
     document.documentElement.appendChild(panel);
     const ctx = canvas.getContext("2d");
@@ -124,7 +126,8 @@
         ctx.drawImage(video, (cx - sw / 2) * kx, (cy - sh / 2) * ky, sw * kx, sh * ky, 0, 0, W, H);
       }
       title.textContent = mag + "%";
-      raf = requestAnimationFrame(draw);
+      rafWin = pip || window;
+      raf = rafWin.requestAnimationFrame(draw); // PiP 창에선 그 창 기준으로 그림
     }
     draw();
 
@@ -138,12 +141,13 @@
       e.preventDefault();
       let lx = e.clientX, ly = e.clientY;
       const move = (ev) => { onMove(ev.clientX - lx, ev.clientY - ly); lx = ev.clientX; ly = ev.clientY; };
+      const w = e.view || window; // PiP 창 안에서도 동작하도록 이벤트가 난 창 기준
       const up = () => {
-        removeEventListener("mousemove", move, true);
-        removeEventListener("mouseup", up, true);
+        w.removeEventListener("mousemove", move, true);
+        w.removeEventListener("mouseup", up, true);
       };
-      addEventListener("mousemove", move, true);
-      addEventListener("mouseup", up, true);
+      w.addEventListener("mousemove", move, true);
+      w.addEventListener("mouseup", up, true);
     }
     // 내용 이동
     canvas.addEventListener("mousedown", (e) => dragWith(e, (dx, dy) => {
@@ -151,15 +155,47 @@
       cx -= dx / scale; cy -= dy / scale;
     }));
     // 패널 이동
-    bar.addEventListener("mousedown", (e) => dragWith(e, (dx, dy) => {
+    bar.addEventListener("mousedown", (e) => !pip && dragWith(e, (dx, dy) => {
       px += dx; py += dy;
       panel.style.left = px + "px"; panel.style.top = py + "px";
     }));
 
     function onEsc(e) { if (e.key === "Escape") close(); }
     addEventListener("keydown", onEsc, true);
+    // 항상 위: Document Picture-in-Picture 창으로 패널을 옮긴다.
+    // 별도 창이라 원본 영역 위에 겹쳐도 자기 자신이 찍히지 않는다.
+    async function togglePin() {
+      if (pip) { pip.close(); return; }
+      if (!window.documentPictureInPicture) { title.textContent = "이 브라우저는 항상 위를 지원하지 않음"; return; }
+      const w = panel.offsetWidth, h = panel.offsetHeight;
+      try {
+        pip = await documentPictureInPicture.requestWindow({ width: w, height: h });
+      } catch (e) {
+        title.textContent = "항상 위 실패: " + e.message;
+        return;
+      }
+      pip.document.body.style.cssText = "margin:0;height:100vh;display:flex;background:#111;overflow:hidden;";
+      Object.assign(panel.style, { position: "static", width: "100%", height: "100%", border: "0", borderRadius: "0", resize: "none" });
+      bar.style.cursor = "default";
+      pinBtn.style.background = "#8b5cf6";
+      pip.document.body.appendChild(panel);
+      pip.addEventListener("keydown", onEsc, true);
+      rafWin.cancelAnimationFrame(raf); draw();
+      pip.addEventListener("pagehide", () => {
+        pip = null;
+        if (!stream?.active) return;
+        Object.assign(panel.style, { position: "fixed", left: px + "px", top: py + "px", width: w + "px", height: h + "px",
+                                     border: "2px solid #8b5cf6", borderRadius: "8px", resize: "both" });
+        bar.style.cursor = "move";
+        pinBtn.style.background = "#ffffff22";
+        document.documentElement.appendChild(panel);
+        draw();
+      });
+    }
+
     function close() {
-      cancelAnimationFrame(raf);
+      if (pip) { const p = pip; pip = null; p.close(); }
+      rafWin.cancelAnimationFrame(raf);
       stream?.getTracks().forEach((t) => t.stop());
       panel.remove();
       removeEventListener("keydown", onEsc, true);
