@@ -18,7 +18,7 @@
       // 대체: 캔버스를 영상으로 바꿔 일반 동영상 PiP로 띄운다 (항상 위, 조작은 탭 안 패널에서).
       try {
         await videoPip(panel);
-        say("항상 위(동영상 PiP) · 조작은 여기서");
+        say("동영상 PiP(⏮⏭로 줌) · 문서 PiP 실패: " + err.message);
       } catch (err2) {
         say("항상 위 실패: " + err.message + " / " + err2.message);
       }
@@ -40,6 +40,14 @@
     document.documentElement.appendChild(video);
     await video.play();
     await video.requestPictureInPicture();
+    // 동영상 PiP 창에는 휠 이벤트가 오지 않으므로, 이전/다음 트랙 버튼을 축소/확대로 쓴다.
+    const zoom = (d) => panel.dispatchEvent(new CustomEvent("__fzZoom", { detail: d }));
+    navigator.mediaSession.setActionHandler("previoustrack", () => zoom(-1));
+    navigator.mediaSession.setActionHandler("nexttrack", () => zoom(1));
+    video.addEventListener("leavepictureinpicture", () => {
+      navigator.mediaSession.setActionHandler("previoustrack", null);
+      navigator.mediaSession.setActionHandler("nexttrack", null);
+    }, { once: true });
     video.addEventListener("leavepictureinpicture", () => video.remove(), { once: true });
     new MutationObserver((_, o) => { // 패널이 닫히면 PiP도 닫기
       if (!panel.isConnected) { o.disconnect(); if (document.pictureInPictureElement === video) document.exitPictureInPicture(); }

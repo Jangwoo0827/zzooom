@@ -170,6 +170,7 @@
     // 📌 클릭 시 PiP 열기는 페이지 쪽 pip.js가 처리하고, 여기서는 열림/닫힘에 맞춰 상태만 바꾼다.
     let size;
     function togglePin() { if (pip) pip.close(); else size = [panel.offsetWidth, panel.offsetHeight]; }
+    panel.addEventListener("__fzZoom", (e) => zoomBy(e.detail * Math.max(step, 10)));
     panel.addEventListener("__fzPipError", (e) => (status = e.detail));
     panel.addEventListener("__fzPipOpen", () => {
       pip = panel.ownerDocument.defaultView;
